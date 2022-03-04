@@ -1,17 +1,17 @@
 import os
+import abc
 import time
 import gym
 import numpy as np
 import pandas as pd
 import pybullet as p
-from gym import error, spaces, utils
+from pathlib import Path
 from PIL import Image
-# from gym.utils import seeding
+from farms_container import Container
 
+import NeuroMechFly
 from NeuroMechFly.sdf.units import SimulationUnitScaling
 from NeuroMechFly.simulation.bullet_simulation import BulletSimulation
-import NeuroMechFly
-from pathlib import Path
 
 
 _neuromechfly_path = Path(NeuroMechFly.__path__[0]).parent
@@ -131,7 +131,9 @@ class _NMF18Simulation(BulletSimulation):
             )
 
         # Walking camera sequence, set rotate_camera to True to activate
-        if self.gui == p.GUI and self.rotate_camera and self.behavior == 'walking':
+        if ((self.gui == p.GUI) and
+                (self.rotate_camera) and
+                (self.behavior == 'walking')):
             base = np.array(self.base_position) * self.units.meters
 
             if t < 3 / self.time_step:
@@ -168,7 +170,9 @@ class _NMF18Simulation(BulletSimulation):
                 base)
 
         # Grooming camera sequence, set rotate_camera to True to activate
-        if self.gui == p.GUI and self.rotate_camera and self.behavior == 'grooming':
+        if ((self.gui == p.GUI) and
+                (self.rotate_camera) and
+                (self.behavior == 'grooming')):
             base = np.array(self.base_position) * self.units.meters
             if t < 0.25 / self.time_step:
                 yaw = 0
@@ -207,12 +211,12 @@ class _NMF18Simulation(BulletSimulation):
             matrix = p.computeViewMatrixFromYawPitchRoll(
                 base, self.camera_distance, 5, -10, 0, 2
             )
-            projectionMatrix = [1.0825318098068237, 0.0, 0.0, 0.0, 0.0, 1.732050895690918, 0.0,
-                                0.0, 0.0, 0.0, -1.0002000331878662, -1.0, 0.0, 0.0, -0.020002000033855438, 0.0]
-            img = p.getCameraImage(1024,
-                                    768,
-                                    viewMatrix=matrix,
-                                    projectionMatrix=projectionMatrix)
+            projectionMatrix = [1.0825318098068237, 0.0, 0.0, 0.0, 0.0,
+                                1.732050895690918, 0.0, 0.0, 0.0, 0.0,
+                                -1.0002000331878662, -1.0, 0.0, 0.0,
+                                -0.020002000033855438, 0.0]
+            img = p.getCameraImage(1024, 768, viewMatrix=matrix,
+                                   projectionMatrix=projectionMatrix)
         if self.gui == p.GUI:
             img = p.getCameraImage(
                 1024, 768, renderer=p.ER_BULLET_HARDWARE_OPENGL)
@@ -283,25 +287,131 @@ class _NMF18Simulation(BulletSimulation):
             'Do not interact with NMF18Simulation.run directly. Interaction '
             'should be rolled out step by step.'
         )
+    
+    def get_curr_state(self, joints=None):
+        if not joints:
+            joints = self.joint_id.keys()
+        curr_state = {}
+        for joint_name in joints:
+            jid = self.joint_id[joint_name]
+            curr_state[joint_name] = p.getJointState(self.animal, jid)
+        return curr_state
 
 
 class NMF18PositionControlEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, run_time=2.0, time_step=1e-4):
+    def __init__(self, run_time=2.0, time_step=1e-4, kp=0.4, kv=0.9,
+                 headless=True, with_ball=True, sim_options=dict()):
         super().__init__()
-
         self.run_time = run_time
         self.time_step = time_step
+        self.kp = kp
+        self.kv = kv
+        self.sim_options = {
+            'model_offset': [0., 0., 11.2e-3],
+            'run_time': run_time,
+            'time_step': time_step,
+            'solver_iterations': 100,
+            'base_link': 'Thorax',
+            'draw_collisions': True,
+            'record': False,
+            'camera_distance': 4.4,
+            'track': False,
+            'slow_down': False,
+            'sleep_time': 1e-2,
+            'rot_cam': True,
+            'ground': 'floor',
+            'save_frames': False,
+        }
+        self.sim_options.update(sim_options)
+        self.sim_options.update({'headless': headless,
+                                 'ground': 'ball' if with_ball else 'floor'})
+        self.act_joints = ['FCoxa', 'FFemur', 'FTibia',
+                           'MCoxa_roll', 'MFemur', 'MTibia',
+                           'HCoxa_roll', 'HFemur', 'HTibia']
+        self.act_joints = [f'joint_{s}{x}' for s in ['R', 'L']
+                                           for x in self.act_joints]
+        self.max_niters = int(np.ceil(self.run_time / self.time_step))
+
+        # Define spaces
+        # action space: dim=18 (target position for each joint)
+        # observ space: dim=40 (pos & vel for each joint, base pos/vel in 2D)
+        self.action_space = gym.spaces.box.Box(low=-np.pi, high=np.pi,
+                                               shape=(18,))
+        self.observation_space = gym.spaces.box.Box(low=-np.pi, high=np.pi,
+                                                    shape=(18 * 2 + 4,))
+
+        # Initialize bullet simulation
+        self.sim = None
+        self.reset()
 
     def step(self, action):
-        pass
+        if self.curr_iter == self.max_niters:
+            raise RuntimeError('Simulation overrun')
+
+        # Parse action
+        tgt_pos_dict = self._pos_control_default_pos.copy()
+        tgt_pos_dict.update({k: v for k, v in zip(self.act_joints, action)})
+
+        # Step simulation
+        self.sim.step(self.curr_time,
+                      action_dict={'target_positions': tgt_pos_dict})
+        self.curr_time += self.time_step
+        self.curr_iter += 1
+
+        # Return observation and reward
+        curr_state = self.sim.get_curr_state()
+        observ = np.array([
+            *[curr_state[joint][0] for joint in self.act_joints],    # position
+            *[curr_state[joint][1] for joint in self.act_joints],    # velocity
+            *self.sim.base_position, *self.sim.base_linear_velocity    # base
+        ])
+        reward = self.calculate_reward(observ, tgt_pos_dict)
+
+        is_done = (self.curr_iter == self.max_niters)
+        debug_info = dict()
+
+        return observ, reward, is_done, debug_info
+
 
     def reset(self):
-        pass
+        del self.sim    # Do this explicitly to avoid physics engine confusion
+        container = Container(self.max_niters)
+        self.sim = _NMF18Simulation(container, self.sim_options,
+                                    kp=self.kp, kv=self.kv,
+                                    control_mode='position')
+        self.curr_iter = 0
+        self.curr_time = 0
+        init_state = self.sim.get_curr_state()
+        self._pos_control_default_pos = {k: v[0] for k, v in init_state.items()
+                                         if k not in self.act_joints}
 
     def render(self, mode='human'):
-        pass
+        if self.sim_options['headless']:
+            base = np.array(self.sim.base_position) * self.sim.units.meters
+            matrix = p.computeViewMatrixFromYawPitchRoll(
+                base, self.sim.camera_distance, 5, -10, 0, 2
+            )
+            projectionMatrix = [1.0825318098068237, 0.0, 0.0, 0.0, 0.0,
+                                1.732050895690918, 0.0, 0.0, 0.0, 0.0,
+                                -1.0002000331878662, -1.0, 0.0, 0.0,
+                                -0.020002000033855438, 0.0]
+            img = p.getCameraImage(1024, 768, viewMatrix=matrix,
+                                   projectionMatrix=projectionMatrix)[2]
+        else:
+            img = p.getCameraImage(1024, 768,
+                                   renderer=p.ER_BULLET_HARDWARE_OPENGL)[2]
+        
+        p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, 0)
+        p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
+        p.configureDebugVisualizer(p.COV_ENABLE_TINY_RENDERER, 0)
+
+        return img
 
     def close(self):
-        pass
+        del self.sim
+    
+    # @abc.abstractmethod
+    def calculate_reward(self, observation, latest_action_dict=None) -> float:
+        return NotImplemented

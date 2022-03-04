@@ -1,8 +1,9 @@
+from operator import is_
 import unittest
 import numpy as np
 import pybullet as p
 from farms_container import Container
-from gym_nmf.envs.nmf18 import _NMF18Simulation
+from gym_nmf.envs.nmf18 import _NMF18Simulation, NMF18PositionControlEnv
 
 class NMF18SimulationTestCase(unittest.TestCase):
     def get_new_sim(self, run_time=0.1, time_step=1e-4, sim_options=dict()):
@@ -60,6 +61,53 @@ class NMF18SimulationTestCase(unittest.TestCase):
             action_dict = {'target_positions': {curr_joint: tgt_pos}}
             sim.step(t, action_dict=action_dict)
 
+
+class NMF18PositionControlEnvTestCase(unittest.TestCase):
+    def test_basic(self):
+        env = NMF18PositionControlEnv(run_time=0.02, headless=False,
+                                      with_ball=False)
+        nsteps = 200
+        obs_hist = []
+        reward_hist = []
+        for i in range(nsteps):
+            tgt_pos = np.deg2rad(60 * i / nsteps)
+            obs, reward, is_done, _ = env.step(np.ones((18,)) * tgt_pos)
+            obs_hist.append(obs)
+            reward_hist.append(reward)
+            self.assertEqual(is_done, i == nsteps - 1)
+        # simulation is now finished, stepping again should raise RuntimeError
+        self.assertRaises(RuntimeError, env.step, tgt_pos)
+    
+    def test_human_render(self):
+        env = NMF18PositionControlEnv(run_time=0.0005, with_ball=False)
+        nsteps = 5
+        obs_hist = []
+        reward_hist = []
+        for i in range(nsteps):
+            tgt_pos = np.deg2rad(60 * i / nsteps)
+            img = env.render()
+            obs, reward, is_done, _ = env.step(np.ones((18,)) * tgt_pos)
+            obs_hist.append(obs)
+            reward_hist.append(reward)
+            self.assertEqual(is_done, i == nsteps - 1)
+        # simulation is now finished, stepping again should raise RuntimeError
+        self.assertRaises(RuntimeError, env.step, tgt_pos)
+        self.assertEqual(img.shape, (768, 1024, 4))
+    
+    def test_basic_with_ball(self):
+        env = NMF18PositionControlEnv(run_time=0.02, headless=False,
+                                      with_ball=True)
+        nsteps = 200
+        obs_hist = []
+        reward_hist = []
+        for i in range(nsteps):
+            tgt_pos = np.deg2rad(60 * i / nsteps)
+            obs, reward, is_done, _ = env.step(np.ones((18,)) * tgt_pos)
+            obs_hist.append(obs)
+            reward_hist.append(reward)
+            self.assertEqual(is_done, i == nsteps - 1)
+        # simulation is now finished, stepping again should raise RuntimeError
+        self.assertRaises(RuntimeError, env.step, tgt_pos)
 
 if __name__ == '__main__':
     unittest.main()
