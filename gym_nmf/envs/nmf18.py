@@ -299,6 +299,16 @@ class _NMF18Simulation(BulletSimulation):
             jid = self.joint_id[joint_name]
             curr_state[joint_name] = p.getJointState(self.animal, jid)
         return curr_state
+    
+    @property
+    def virtual_position(self):
+        rot = np.array(self.ball_rotations)
+        return rot * self.ball_radius * self.units.meters
+    
+    @property
+    def virtual_velocity(self):
+        drot_dt = np.array(self.ball_velocity)
+        return drot_dt * self.ball_radius * self.units.meters
 
 
 class NMF18PositionControlEnv(gym.Env):
@@ -341,11 +351,11 @@ class NMF18PositionControlEnv(gym.Env):
 
         # Define spaces
         # action space: dim=18 (target position for each joint)
-        # observ space: dim=58 (pos/vel/torq for each joint, base pos/vel in 2D)
+        # observ space: dim=60 (pos/vel/torq for each joint, base pos/vel)
         self.action_space = gym.spaces.box.Box(low=-np.pi, high=np.pi,
                                                shape=(18,))
         self.observation_space = gym.spaces.box.Box(low=-np.pi, high=np.pi,
-                                                    shape=(18 * 3 + 4,))
+                                                    shape=(18 * 3 + 6,))
 
         # Initialize bullet simulation
         self.sim = None
@@ -371,7 +381,7 @@ class NMF18PositionControlEnv(gym.Env):
             *[curr_state[joint][0] for joint in self.act_joints],    # position
             *[curr_state[joint][1] for joint in self.act_joints],    # velocity
             *[curr_state[joint][3] for joint in self.act_joints],    # torque
-            *self.sim.base_position, *self.sim.base_linear_velocity    # base
+            *self.sim.virtual_position, *self.sim.virtual_velocity   # fly x, x'
         ])
         reward = self.calculate_reward(observ, tgt_pos_dict)
 

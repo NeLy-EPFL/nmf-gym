@@ -49,7 +49,7 @@ if __name__ == '__main__':
     plt.show()
 
     # Plot base position
-    plt.plot([obs[-4] for obs in obs_hist], [obs[-3] for obs in obs_hist])
+    plt.plot([obs[-6] for obs in obs_hist], [obs[-5] for obs in obs_hist])
     plt.title('Fly Base Position')
     plt.xlabel('x position')
     plt.ylabel('y position')
