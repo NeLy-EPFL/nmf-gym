@@ -1,7 +1,9 @@
-from operator import is_
 import unittest
 import numpy as np
+import pandas as pd
 import pybullet as p
+import NeuroMechFly
+from pathlib import Path
 from farms_container import Container
 from gym_nmf.envs.nmf18 import _NMF18Simulation, NMF18PositionControlEnv
 
@@ -94,10 +96,10 @@ class NMF18PositionControlEnvTestCase(unittest.TestCase):
         self.assertRaises(RuntimeError, env.step, tgt_pos)
         self.assertEqual(img.shape, (768, 1024, 4))
     
-    def test_basic_with_ball(self):
-        env = NMF18PositionControlEnv(run_time=0.02, headless=False,
+    def test_basic_with_ball_unrealistic(self):
+        env = NMF18PositionControlEnv(run_time=0.2, headless=False,
                                       with_ball=True)
-        nsteps = 200
+        nsteps = 2000
         obs_hist = []
         reward_hist = []
         for i in range(nsteps):
@@ -108,6 +110,7 @@ class NMF18PositionControlEnvTestCase(unittest.TestCase):
             self.assertEqual(is_done, i == nsteps - 1)
         # simulation is now finished, stepping again should raise RuntimeError
         self.assertRaises(RuntimeError, env.step, tgt_pos)
+
 
 if __name__ == '__main__':
     unittest.main()

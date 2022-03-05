@@ -19,6 +19,7 @@ _neuromechfly_path = Path(NeuroMechFly.__path__[0]).parent
 
 class _NMF18Simulation(BulletSimulation):
     def __init__(self, container, sim_options, control_mode, kp=None, kv=None,
+                 max_force=None,
                  units=SimulationUnitScaling(meters=1000, kilograms=1000)):
 
         if 'model' not in sim_options:
@@ -33,6 +34,7 @@ class _NMF18Simulation(BulletSimulation):
 
         self.kp = kp
         self.kv = kv
+        self.max_force = np.inf if max_force is None else max_force
 
         # Set the physical properties of the environment
         dynamics = {
@@ -68,7 +70,8 @@ class _NMF18Simulation(BulletSimulation):
             p.setJointMotorControl2(self.animal, jid,
                                     controlMode=p.POSITION_CONTROL,
                                     targetPosition=position,
-                                    positionGain=self.kp)
+                                    positionGain=self.kp,
+                                    force=self.max_force)
             p.changeDynamics(self.animal, jid, maxJointVelocity=1e8)
 
     def _change_color(self, identity, color):
@@ -205,7 +208,7 @@ class _NMF18Simulation(BulletSimulation):
                 pitch,
                 base)
 
-    def _save_curr_frame(self):
+    def _save_curr_frame(self, t):
         if self.gui == p.DIRECT:
             base = np.array(self.base_position) * self.units.meters
             matrix = p.computeViewMatrixFromYawPitchRoll(
@@ -243,7 +246,7 @@ class _NMF18Simulation(BulletSimulation):
         self._reposition_camera(t)
 
         if self.save_frames:
-            self._save_curr_frame()
+            self._save_curr_frame(t)
 
         # Update logs
         self.update_logs()
@@ -302,12 +305,14 @@ class NMF18PositionControlEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
     def __init__(self, run_time=2.0, time_step=1e-4, kp=0.4, kv=0.9,
+                 max_force=20,
                  headless=True, with_ball=True, sim_options=dict()):
         super().__init__()
         self.run_time = run_time
         self.time_step = time_step
         self.kp = kp
         self.kv = kv
+        self.max_force = max_force
         self.sim_options = {
             'model_offset': [0., 0., 11.2e-3],
             'run_time': run_time,
@@ -336,11 +341,11 @@ class NMF18PositionControlEnv(gym.Env):
 
         # Define spaces
         # action space: dim=18 (target position for each joint)
-        # observ space: dim=40 (pos & vel for each joint, base pos/vel in 2D)
+        # observ space: dim=58 (pos/vel/torq for each joint, base pos/vel in 2D)
         self.action_space = gym.spaces.box.Box(low=-np.pi, high=np.pi,
                                                shape=(18,))
         self.observation_space = gym.spaces.box.Box(low=-np.pi, high=np.pi,
-                                                    shape=(18 * 2 + 4,))
+                                                    shape=(18 * 3 + 4,))
 
         # Initialize bullet simulation
         self.sim = None
@@ -361,10 +366,11 @@ class NMF18PositionControlEnv(gym.Env):
         self.curr_iter += 1
 
         # Return observation and reward
-        curr_state = self.sim.get_curr_state()
+        curr_state = self.sim.get_curr_state(self.act_joints)
         observ = np.array([
             *[curr_state[joint][0] for joint in self.act_joints],    # position
             *[curr_state[joint][1] for joint in self.act_joints],    # velocity
+            *[curr_state[joint][3] for joint in self.act_joints],    # torque
             *self.sim.base_position, *self.sim.base_linear_velocity    # base
         ])
         reward = self.calculate_reward(observ, tgt_pos_dict)
@@ -380,6 +386,7 @@ class NMF18PositionControlEnv(gym.Env):
         container = Container(self.max_niters)
         self.sim = _NMF18Simulation(container, self.sim_options,
                                     kp=self.kp, kv=self.kv,
+                                    max_force=self.max_force,
                                     control_mode='position')
         self.curr_iter = 0
         self.curr_time = 0
