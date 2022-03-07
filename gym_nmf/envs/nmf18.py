@@ -302,16 +302,22 @@ class _NMF18Simulation(BulletSimulation):
     
     @property
     def virtual_position(self):
-        rot = np.array(self.ball_rotations)
+        if self.ground == 'ball':
+            rot = np.array(self.ball_rotations)
+        else:
+            rot = np.zeros((3,))
         return rot * self.ball_radius * self.units.meters
     
     @property
     def virtual_velocity(self):
-        drot_dt = np.array(self.ball_velocity)
+        if self.ground == 'ball':
+            drot_dt = np.array(self.ball_velocity)
+        else:
+            drot_dt = np.zeros((3,))
         return drot_dt * self.ball_radius * self.units.meters
 
 
-class NMF18PositionControlEnv(gym.Env):
+class NMF18PositionControlBaseEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
     def __init__(self, run_time=2.0, time_step=1e-4, kp=0.4, kv=0.9,
@@ -376,14 +382,8 @@ class NMF18PositionControlEnv(gym.Env):
         self.curr_iter += 1
 
         # Return observation and reward
-        curr_state = self.sim.get_curr_state(self.act_joints)
-        observ = np.array([
-            *[curr_state[joint][0] for joint in self.act_joints],    # position
-            *[curr_state[joint][1] for joint in self.act_joints],    # velocity
-            *[curr_state[joint][3] for joint in self.act_joints],    # torque
-            *self.sim.virtual_position, *self.sim.virtual_velocity   # fly x, x'
-        ])
-        reward = self.calculate_reward(observ, tgt_pos_dict)
+        observ = self._get_observation()
+        reward = self._calculate_reward(observ, tgt_pos_dict)
 
         is_done = (self.curr_iter == self.max_niters)
         debug_info = dict()
@@ -428,7 +428,43 @@ class NMF18PositionControlEnv(gym.Env):
 
     def close(self):
         del self.sim
-    
-    # @abc.abstractmethod
-    def calculate_reward(self, observation, latest_action_dict=None) -> float:
+
+    @abc.abstractmethod
+    def _get_observation(self):
         return NotImplemented
+    
+    @abc.abstractmethod
+    def _calculate_reward(self, observation, latest_action_dict=None) -> float:
+        return NotImplemented
+
+
+class NMF18SimplePositionControlEnv(NMF18PositionControlBaseEnv):
+    def _get_observation(self):
+        curr_state = self.sim.get_curr_state(self.act_joints)
+        observ = np.array([
+            *[curr_state[joint][0] for joint in self.act_joints],    # position
+            *[curr_state[joint][1] for joint in self.act_joints],    # velocity
+            *[curr_state[joint][3] for joint in self.act_joints],    # torque
+            *self.sim.virtual_position, *self.sim.virtual_velocity   # fly x, x'
+        ])
+        return observ
+    
+    def _calculate_reward(self, observation, latest_action_dict):
+        return np.nan
+
+
+class NMF18Pos2PosEnv(NMF18PositionControlBaseEnv):
+    def __init__(self, state_indices, run_time=2, time_step=0.0001,
+                 kp=0.4, kv=0.9, max_force=20, headless=True, with_ball=True,
+                 sim_options=dict()):
+        super().__init__(run_time, time_step, kp, kv, max_force, headless,
+                         with_ball, sim_options)
+        self.state_indices = state_indices
+    
+    def _get_observation(self):
+        obs = [self.pos_df.iloc[self.curr_iter + offset].values
+               for offset in self.state_indices]
+        return np.array(obs)
+
+    def _calculate_reward(self, observation, latest_action_dict):
+        return np.nan

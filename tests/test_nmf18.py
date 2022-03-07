@@ -5,7 +5,7 @@ import pybullet as p
 import NeuroMechFly
 from pathlib import Path
 from farms_container import Container
-from gym_nmf.envs.nmf18 import _NMF18Simulation, NMF18PositionControlEnv
+from gym_nmf.envs.nmf18 import _NMF18Simulation, NMF18SimplePositionControlEnv
 
 class NMF18SimulationTestCase(unittest.TestCase):
     def get_new_sim(self, run_time=0.1, time_step=1e-4, sim_options=dict()):
@@ -66,8 +66,8 @@ class NMF18SimulationTestCase(unittest.TestCase):
 
 class NMF18PositionControlEnvTestCase(unittest.TestCase):
     def test_basic(self):
-        env = NMF18PositionControlEnv(run_time=0.02, headless=False,
-                                      with_ball=False)
+        env = NMF18SimplePositionControlEnv(run_time=0.02, headless=False,
+                                            with_ball=False)
         nsteps = 200
         obs_hist = []
         reward_hist = []
@@ -81,7 +81,7 @@ class NMF18PositionControlEnvTestCase(unittest.TestCase):
         self.assertRaises(RuntimeError, env.step, tgt_pos)
     
     def test_human_render(self):
-        env = NMF18PositionControlEnv(run_time=0.0005, with_ball=False)
+        env = NMF18SimplePositionControlEnv(run_time=0.0005, with_ball=False)
         nsteps = 5
         obs_hist = []
         reward_hist = []
@@ -97,8 +97,8 @@ class NMF18PositionControlEnvTestCase(unittest.TestCase):
         self.assertEqual(img.shape, (768, 1024, 4))
     
     def test_basic_with_ball_unrealistic(self):
-        env = NMF18PositionControlEnv(run_time=0.2, headless=False,
-                                      with_ball=True)
+        env = NMF18SimplePositionControlEnv(run_time=0.2, headless=False,
+                                            with_ball=True)
         nsteps = 2000
         obs_hist = []
         reward_hist = []
