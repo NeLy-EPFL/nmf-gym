@@ -7,7 +7,7 @@ import pandas as pd
 import pybullet as p
 from pathlib import Path
 from PIL import Image
-from farms_container import Container
+from farms_container import Container as _Container
 
 import NeuroMechFly
 from NeuroMechFly.sdf.units import SimulationUnitScaling
@@ -15,6 +15,13 @@ from NeuroMechFly.simulation.bullet_simulation import BulletSimulation
 
 
 _neuromechfly_path = Path(NeuroMechFly.__path__[0]).parent
+
+
+class Container(_Container):
+    """Extend FARMS Container to make maximum iterations accessible."""
+    @property
+    def max_iterations(self):
+        return int(self.__max_iterations)
 
 
 class _NMF18Simulation(BulletSimulation):
@@ -356,12 +363,12 @@ class NMF18PositionControlBaseEnv(gym.Env):
         self.max_niters = int(np.ceil(self.run_time / self.time_step))
 
         # Define spaces
-        # action space: dim=18 (target position for each joint)
-        # observ space: dim=60 (pos/vel/torq for each joint, base pos/vel)
-        self.action_space = gym.spaces.box.Box(low=-np.pi, high=np.pi,
-                                               shape=(18,))
-        self.observation_space = gym.spaces.box.Box(low=-np.pi, high=np.pi,
-                                                    shape=(18 * 3 + 6,))
+        self.action_space, self.observation_space = self._define_spaces()
+        
+        # Keep a record of pos and vel outside FARMS to make the whole
+        # history accessible. Initialized in self.reset
+        self.pos_hist = None
+        self.vel_hist = None
 
         # Initialize bullet simulation
         self.sim = None
@@ -378,11 +385,15 @@ class NMF18PositionControlBaseEnv(gym.Env):
         # Step simulation
         self.sim.step(self.curr_time,
                       action_dict={'target_positions': tgt_pos_dict})
+        curr_state = self.sim.get_curr_state(self.act_joints)
+        self.pos_hist[self.curr_iter, :] = [curr_state[k][0]
+                                            for k in self.act_joints]
+        self.vel_hist[self.curr_iter, :] = [curr_state[k][1]
+                                            for k in self.act_joints]
         self.curr_time += self.time_step
         self.curr_iter += 1
 
-        # Return observation and reward
-        observ = self._get_observation()
+        observ = self._parse_observation(curr_state)
         reward = self._calculate_reward(observ, tgt_pos_dict)
 
         is_done = (self.curr_iter == self.max_niters)
@@ -403,6 +414,11 @@ class NMF18PositionControlBaseEnv(gym.Env):
         init_state = self.sim.get_curr_state()
         self._pos_control_default_pos = {k: v[0] for k, v in init_state.items()
                                          if k not in self.act_joints}
+        
+        # Keep a record of pos and vel outside FARMS to make the whole
+        # history accessible
+        self.pos_hist = np.full((self.max_niters, len(self.act_joints)), np.nan)
+        self.vel_hist = self.pos_hist.copy()
 
     def render(self, mode='human'):
         if self.sim_options['headless']:
@@ -428,9 +444,12 @@ class NMF18PositionControlBaseEnv(gym.Env):
 
     def close(self):
         del self.sim
+    
+    def _define_spaces(self):
+        return NotImplemented, NotImplemented
 
     @abc.abstractmethod
-    def _get_observation(self):
+    def _parse_observation(self):
         return NotImplemented
     
     @abc.abstractmethod
@@ -439,8 +458,13 @@ class NMF18PositionControlBaseEnv(gym.Env):
 
 
 class NMF18SimplePositionControlEnv(NMF18PositionControlBaseEnv):
-    def _get_observation(self):
-        curr_state = self.sim.get_curr_state(self.act_joints)
+    def _define_spaces(self):
+        action_space = gym.spaces.box.Box(low=-np.pi, high=np.pi, shape=(18,))
+        obs_space = gym.spaces.box.Box(low=-np.pi, high=np.pi,
+                                       shape=(18 * 3 + 6,))
+        return action_space, obs_space
+
+    def _parse_observation(self, curr_state):
         observ = np.array([
             *[curr_state[joint][0] for joint in self.act_joints],    # position
             *[curr_state[joint][1] for joint in self.act_joints],    # velocity
@@ -457,13 +481,24 @@ class NMF18Pos2PosEnv(NMF18PositionControlBaseEnv):
     def __init__(self, state_indices, run_time=2, time_step=0.0001,
                  kp=0.4, kv=0.9, max_force=20, headless=True, with_ball=True,
                  sim_options=dict()):
+        self.state_indices = state_indices
         super().__init__(run_time, time_step, kp, kv, max_force, headless,
                          with_ball, sim_options)
-        self.state_indices = state_indices
     
-    def _get_observation(self):
-        obs = [self.pos_df.iloc[self.curr_iter + offset].values
-               for offset in self.state_indices]
+    def _define_spaces(self):
+        action_space = gym.spaces.box.Box(low=-np.pi, high=np.pi,
+                                          shape=(len(self.state_indices), 18))
+        obs_space = gym.spaces.box.Box(low=-np.pi, high=np.pi, shape=(18,))
+        return action_space, obs_space
+    
+    def _parse_observation(self, curr_state):
+        obs = []
+        for offset in self.state_indices:
+            idx = self.curr_iter + offset
+            if idx < 0:
+                obs.append(np.full((len(self.act_joints),), np.nan))
+            else:
+                obs.append(self.pos_hist[idx, :])
         return np.array(obs)
 
     def _calculate_reward(self, observation, latest_action_dict):
