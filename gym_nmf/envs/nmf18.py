@@ -1,3 +1,4 @@
+from ntpath import join
 import os
 import abc
 import time
@@ -10,11 +11,22 @@ from PIL import Image
 from farms_container import Container as _Container
 
 import NeuroMechFly
+from NeuroMechFly.sdf.sdf import ModelSDF
 from NeuroMechFly.sdf.units import SimulationUnitScaling
 from NeuroMechFly.simulation.bullet_simulation import BulletSimulation
 
 
 _neuromechfly_path = Path(NeuroMechFly.__path__[0]).parent
+
+
+def load_joint_limit(sdf_path):
+    _sdf_model = ModelSDF.read(sdf_path)[0]
+    joint_limits = {
+        joint.name: joint.axis.limits[:2]
+        for joint in _sdf_model.joints
+        if joint.axis.limits
+    }
+    return joint_limits
 
 
 class Container(_Container):
@@ -31,7 +43,7 @@ class _NMF18Simulation(BulletSimulation):
 
         if 'model' not in sim_options:
             sim_options['model'] = str(_neuromechfly_path /
-                'data/design/sdf/neuromechfly_locomotion_optimization.sdf'
+                'data/design/sdf/neuromechfly_locomotion_optimization_revolute.sdf'
             )
         if 'pose' not in sim_options:
             sim_options['pose'] = str(_neuromechfly_path /
@@ -374,36 +386,83 @@ class NMF18PositionControlBaseEnv(gym.Env):
         self.sim = None
         self.reset()
 
+        # Get joint limits (lower lim = self.joint_limits[0], upper limits [1])
+        # do this after self.reset() so sim.model is defined
+        limits_d = load_joint_limit(self.sim.model)
+        self.joint_limits = np.array([limits_d[x] for x in self.act_joints]).T
+        for i, joint_name in enumerate(self.act_joints):
+            link_name = joint_name.replace('joint_', '')
+            p.changeDynamics(self.sim.animal, self.sim.link_id[link_name],
+                             jointLowerLimit=self.joint_limits[0, i],
+                             jointUpperLimit=self.joint_limits[1, i],
+                             jointLimitForce=1e8)
+
+
     def step(self, action):
         if self.curr_iter == self.max_niters:
             raise RuntimeError('Simulation overrun')
 
         # Parse action
         tgt_pos_dict = self._pos_control_default_pos.copy()
-        tgt_pos_dict.update({k: v for k, v in zip(self.act_joints, action)})
+        new_pos_vec = self.pos_hist[self.curr_iter, :] + action
+        new_pos_vec = np.maximum(new_pos_vec, self.joint_limits[0])  # lower lim
+        new_pos_vec = np.minimum(new_pos_vec, self.joint_limits[1])  # upper lim
+        tgt_pos_dict.update({k: v
+                             for k, v in zip(self.act_joints, new_pos_vec)})
 
         # Step simulation
         self.sim.step(self.curr_time,
                       action_dict={'target_positions': tgt_pos_dict})
+        self.curr_time += self.time_step
+        self.curr_iter += 1
+
+        # Get state from simulation
         curr_state = self.sim.get_curr_state(self.act_joints)
         self.pos_hist[self.curr_iter, :] = [curr_state[k][0]
                                             for k in self.act_joints]
         self.vel_hist[self.curr_iter, :] = [curr_state[k][1]
                                             for k in self.act_joints]
-        self.curr_time += self.time_step
-        self.curr_iter += 1
 
+        # Calculate observation and reward
         observ = self._parse_observation(curr_state)
         reward = self._calculate_reward(observ, tgt_pos_dict)
-
+        joint_out_of_bound = np.any([
+            self.pos_hist[self.curr_iter] < self.joint_limits[0] - 0.3,
+            self.pos_hist[self.curr_iter] > self.joint_limits[1] + 0.3
+        ])
+        if joint_out_of_bound and self.curr_iter > 10:
+            print(f'OUT OF BOUND at iter {self.curr_iter}=====')
+            curr_pos = self.pos_hist[self.curr_iter]
+            for i, joint in enumerate(self.act_joints):
+                if ((curr_pos[i] < self.joint_limits[0, i] - 0.3) or
+                        (curr_pos[i] > self.joint_limits[1, i] + 0.3)):
+                    print('%s=%.2f, tgt=%.2f, range=(%.2f, %.2f)'
+                              % (joint, curr_pos[i], new_pos_vec[i],
+                                 *self.joint_limits[:, i]))
+            # input()
+            reward -= 10
         is_done = (self.curr_iter == self.max_niters)
+        is_done |= (joint_out_of_bound and self.curr_iter > 10)
         debug_info = dict()
+
+        # print('>>> OBSERV', observ)
+        # print('>>> REARD', reward)
+        # print('>>> IS_DONE', is_done)
+        # assert False
+        # from time import sleep
+        # sleep(0.05)
 
         return observ, reward, is_done, debug_info
 
 
     def reset(self):
         del self.sim    # Do this explicitly to avoid physics engine confusion
+        # Keep a record of pos and vel outside FARMS to make the whole
+        # history accessible
+        self.pos_hist = np.full((self.max_niters + 1, len(self.act_joints)),
+                                np.nan)
+        self.vel_hist = self.pos_hist.copy()
+
         container = Container(self.max_niters)
         self.sim = _NMF18Simulation(container, self.sim_options,
                                     kp=self.kp, kv=self.kv,
@@ -412,13 +471,12 @@ class NMF18PositionControlBaseEnv(gym.Env):
         self.curr_iter = 0
         self.curr_time = 0
         init_state = self.sim.get_curr_state()
+        self.pos_hist[0, :] = [init_state[k][0] for k in self.act_joints]
+        self.vel_hist[0, :] = [init_state[k][1] for k in self.act_joints]
         self._pos_control_default_pos = {k: v[0] for k, v in init_state.items()
                                          if k not in self.act_joints}
-        
-        # Keep a record of pos and vel outside FARMS to make the whole
-        # history accessible
-        self.pos_hist = np.full((self.max_niters, len(self.act_joints)), np.nan)
-        self.vel_hist = self.pos_hist.copy()
+        self._last_position = 0
+        return self._parse_observation(init_state)
 
     def render(self, mode='human'):
         if self.sim_options['headless']:
@@ -458,9 +516,14 @@ class NMF18PositionControlBaseEnv(gym.Env):
 
 
 class NMF18SimplePositionControlEnv(NMF18PositionControlBaseEnv):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+
     def _define_spaces(self):
         action_space = gym.spaces.box.Box(low=-np.pi, high=np.pi, shape=(18,))
-        obs_space = gym.spaces.box.Box(low=-np.pi, high=np.pi,
+        obs_space = gym.spaces.box.Box(low=np.deg2rad(-36),
+                                       high=np.deg2rad(36),
                                        shape=(18 * 3 + 6,))
         return action_space, obs_space
 
@@ -474,10 +537,10 @@ class NMF18SimplePositionControlEnv(NMF18PositionControlBaseEnv):
         return observ
     
     def _calculate_reward(self, observation, latest_action_dict):
-        return np.nan
+        return self.sim.virtual_position[0]
 
 
-class NMF18Pos2PosEnv(NMF18PositionControlBaseEnv):
+class NMF18Pos2PosDistanceEnv(NMF18PositionControlBaseEnv):
     def __init__(self, state_indices, run_time=2, time_step=0.0001,
                  kp=0.4, kv=0.9, max_force=20, headless=True, with_ball=True,
                  sim_options=dict()):
@@ -486,20 +549,24 @@ class NMF18Pos2PosEnv(NMF18PositionControlBaseEnv):
                          with_ball, sim_options)
     
     def _define_spaces(self):
-        action_space = gym.spaces.box.Box(low=-np.pi, high=np.pi,
-                                          shape=(len(self.state_indices), 18))
-        obs_space = gym.spaces.box.Box(low=-np.pi, high=np.pi, shape=(18,))
-        return action_space, obs_space
+        act_space = gym.spaces.box.Box(low=-np.pi, high=np.pi, shape=(18,))
+        obs_space = gym.spaces.box.Box(low=np.deg2rad(-0.02),
+                                       high=np.deg2rad(0.02),
+                                       shape=(len(self.state_indices), 18))
+        return act_space, obs_space
     
     def _parse_observation(self, curr_state):
         obs = []
         for offset in self.state_indices:
             idx = self.curr_iter + offset
             if idx < 0:
-                obs.append(np.full((len(self.act_joints),), np.nan))
+                # obs.append(np.full((len(self.act_joints),), np.nan))
+                obs.append(self.pos_hist[0, :])
             else:
                 obs.append(self.pos_hist[idx, :])
         return np.array(obs)
 
     def _calculate_reward(self, observation, latest_action_dict):
-        return np.nan
+        displacement = self.sim.virtual_position[0] - self._last_position
+        self._last_position = self.sim.virtual_position[0]
+        return displacement
