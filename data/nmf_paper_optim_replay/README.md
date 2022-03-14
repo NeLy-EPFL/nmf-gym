@@ -1,0 +1,1 @@
+`joint_positions_from_paper.h5` is copied from `NeuroMechFly/scripts/neuromuscular_optimization/simulation_last_run_baseline/gen_final/sol_tradeoff/physics/joint_positions.h5` after running `NeuroMechFly/scripts/neuromuscular_optimization/run_neuromuscular_control`. See NMF instructions on repreducing results in the paper.
