@@ -426,23 +426,22 @@ class NMF18PositionControlBaseEnv(gym.Env):
         # Calculate observation and reward
         observ = self._parse_observation(curr_state)
         reward = self._calculate_reward(observ, tgt_pos_dict)
-        joint_out_of_bound = np.any([
-            self.pos_hist[self.curr_iter] < self.joint_limits[0] - 0.3,
-            self.pos_hist[self.curr_iter] > self.joint_limits[1] + 0.3
-        ])
-        if joint_out_of_bound and self.curr_iter > 10:
-            print(f'OUT OF BOUND at iter {self.curr_iter}=====')
-            curr_pos = self.pos_hist[self.curr_iter]
-            for i, joint in enumerate(self.act_joints):
-                if ((curr_pos[i] < self.joint_limits[0, i] - 0.3) or
-                        (curr_pos[i] > self.joint_limits[1, i] + 0.3)):
-                    print('%s=%.2f, tgt=%.2f, range=(%.2f, %.2f)'
-                              % (joint, curr_pos[i], new_pos_vec[i],
-                                 *self.joint_limits[:, i]))
-            # input()
-            reward -= 10
+        # joint_out_of_bound = np.any([
+        #     self.pos_hist[self.curr_iter] < self.joint_limits[0] - 0.3,
+        #     self.pos_hist[self.curr_iter] > self.joint_limits[1] + 0.3
+        # ])
+        # if joint_out_of_bound and self.curr_iter > 10:
+        #     print(f'OUT OF BOUND at iter {self.curr_iter}=====')
+        #     curr_pos = self.pos_hist[self.curr_iter]
+        #     for i, joint in enumerate(self.act_joints):
+        #         if ((curr_pos[i] < self.joint_limits[0, i] - 0.3) or
+        #                 (curr_pos[i] > self.joint_limits[1, i] + 0.3)):
+        #             print('%s=%.2f, tgt=%.2f, range=(%.2f, %.2f)'
+        #                       % (joint, curr_pos[i], new_pos_vec[i],
+        #                          *self.joint_limits[:, i]))
+        #     reward -= 10
         is_done = (self.curr_iter == self.max_niters)
-        is_done |= (joint_out_of_bound and self.curr_iter > 10)
+        # is_done |= (joint_out_of_bound and self.curr_iter > 10)
         debug_info = dict()
 
         # print('>>> OBSERV', observ)
