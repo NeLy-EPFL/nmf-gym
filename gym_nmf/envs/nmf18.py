@@ -6,6 +6,7 @@ import gym
 import numpy as np
 import pandas as pd
 import pybullet as p
+from typing import Tuple, Dict
 from pathlib import Path
 from PIL import Image
 from farms_container import Container as _Container
@@ -42,9 +43,16 @@ class _NMF18Simulation(BulletSimulation):
                  units=SimulationUnitScaling(meters=1000, kilograms=1000)):
 
         if 'model' not in sim_options:
+            # Joint limits strictly enforced (joint types = revolute in SDF)
             sim_options['model'] = str(_neuromechfly_path /
-                'data/design/sdf/neuromechfly_locomotion_optimization_revolute.sdf'
+                'data/design/sdf/' /
+                'neuromechfly_locomotion_optimization_revolute.sdf'
             )
+            # Joint limits not enforced (joint types = continuous in SDF)
+            # sim_options['model'] = str(_neuromechfly_path /
+            #     'data/design/sdf/' /
+            #     'neuromechfly_locomotion_optimization.sdf'
+            # )
         if 'pose' not in sim_options:
             sim_options['pose'] = str(_neuromechfly_path /
                 'data/config/pose/pose_tripod.yaml'
@@ -402,15 +410,9 @@ class NMF18PositionControlBaseEnv(gym.Env):
         if self.curr_iter == self.max_niters:
             raise RuntimeError('Simulation overrun')
 
-        # Parse action
-        tgt_pos_dict = self._pos_control_default_pos.copy()
-        new_pos_vec = self.pos_hist[self.curr_iter, :] + action
-        new_pos_vec = np.maximum(new_pos_vec, self.joint_limits[0])  # lower lim
-        new_pos_vec = np.minimum(new_pos_vec, self.joint_limits[1])  # upper lim
-        tgt_pos_dict.update({k: v
-                             for k, v in zip(self.act_joints, new_pos_vec)})
-
         # Step simulation
+        tgt_pos_dict = self._parse_action(action)
+
         self.sim.step(self.curr_time,
                       action_dict={'target_positions': tgt_pos_dict})
         self.curr_time += self.time_step
@@ -424,6 +426,7 @@ class NMF18PositionControlBaseEnv(gym.Env):
                                             for k in self.act_joints]
 
         # Calculate observation and reward
+        # Uncomment the following code for out-of-range detection
         observ = self._parse_observation(curr_state)
         reward = self._calculate_reward(observ, tgt_pos_dict)
         # joint_out_of_bound = np.any([
@@ -478,6 +481,11 @@ class NMF18PositionControlBaseEnv(gym.Env):
         return self._parse_observation(init_state)
 
     def render(self, mode='human'):
+        """
+        Note that rendering can be done by setting the `headless`
+        parameter to False upon init. This is faster as PyBullet's
+        built in rendering code will be invoked.
+        """
         if self.sim_options['headless']:
             base = np.array(self.sim.base_position) * self.sim.units.meters
             matrix = p.computeViewMatrixFromYawPitchRoll(
@@ -502,15 +510,37 @@ class NMF18PositionControlBaseEnv(gym.Env):
     def close(self):
         del self.sim
     
-    def _define_spaces(self):
+    @abc.abstractmethod
+    def _define_spaces(self) -> Tuple[gym.Space, gym.Space]:
+        """
+        Return the Gym action space and the observation space.
+        """
         return NotImplemented, NotImplemented
 
     @abc.abstractmethod
-    def _parse_observation(self):
+    def _parse_observation(self, curr_state) -> np.ndarray:
+        """
+        Return the observation in accordance with the observation
+        space specs, given the current state returned by
+        `_NMF18Simulation.get_curr_state()`.
+        """
+        return NotImplemented
+    
+    @abc.abstractmethod
+    def _parse_action(self, action) -> Dict[str, float]:
+        """
+        Parse the given action, in accordance with the action space
+        specs, into a dictionary mapping actuated joint names to
+        the target positions.
+        """
         return NotImplemented
     
     @abc.abstractmethod
     def _calculate_reward(self, observation, latest_action_dict=None) -> float:
+        """
+        Calculate reward value given the current observation and the
+        latest action dict (as returned by `self._parse_action()`).
+        """
         return NotImplemented
 
 
@@ -526,6 +556,11 @@ class NMF18SimplePositionControlEnv(NMF18PositionControlBaseEnv):
                                        shape=(18 * 3 + 6,))
         return action_space, obs_space
 
+    def _parse_action(self, action):
+        tgt_pos_dict = self._pos_control_default_pos.copy()
+        tgt_pos_dict.update({k: v for k, v in zip(self.act_joints, action)})
+        return tgt_pos_dict
+
     def _parse_observation(self, curr_state):
         observ = np.array([
             *[curr_state[joint][0] for joint in self.act_joints],    # position
@@ -536,7 +571,7 @@ class NMF18SimplePositionControlEnv(NMF18PositionControlBaseEnv):
         return observ
     
     def _calculate_reward(self, observation, latest_action_dict):
-        return self.sim.virtual_position[0]
+        return np.nan
 
 
 class NMF18Pos2PosDistanceEnv(NMF18PositionControlBaseEnv):
@@ -554,12 +589,20 @@ class NMF18Pos2PosDistanceEnv(NMF18PositionControlBaseEnv):
                                        shape=(len(self.state_indices), 18))
         return act_space, obs_space
     
+    def _parse_action(self, action):
+        tgt_pos_dict = self._pos_control_default_pos.copy()
+        new_pos_vec = self.pos_hist[self.curr_iter, :] + action
+        new_pos_vec = np.maximum(new_pos_vec, self.joint_limits[0])  # lower lim
+        new_pos_vec = np.minimum(new_pos_vec, self.joint_limits[1])  # upper lim
+        tgt_pos_dict.update({k: v
+                             for k, v in zip(self.act_joints, new_pos_vec)})
+        return tgt_pos_dict
+    
     def _parse_observation(self, curr_state):
         obs = []
         for offset in self.state_indices:
             idx = self.curr_iter + offset
             if idx < 0:
-                # obs.append(np.full((len(self.act_joints),), np.nan))
                 obs.append(self.pos_hist[0, :])
             else:
                 obs.append(self.pos_hist[idx, :])
