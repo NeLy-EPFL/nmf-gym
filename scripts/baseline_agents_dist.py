@@ -1,3 +1,9 @@
+"""
+Using stable-baselines3 (SB3), train baseline agent with PPO that
+maximizes walking distance. No penalty applied since this is only
+a test.
+"""
+
 import gym
 import gym_nmf
 from pathlib import Path
