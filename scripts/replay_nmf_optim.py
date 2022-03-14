@@ -9,8 +9,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
 
-import gym_nmf
-from gym_nmf.envs import NMF18SimplePositionControlEnv
+import nmf_gym
+from nmf_gym.envs import NMF18SimplePositionControlEnv
 
 
 if __name__ == '__main__':
@@ -20,7 +20,7 @@ if __name__ == '__main__':
     
     # Load target position dataframe
     tgt_joint_pos_path = (
-        Path(gym_nmf.__path__[0]).parent / 
+        Path(nmf_gym.__path__[0]).parent / 
         'data/nmf_paper_optim_replay/joint_positions_from_paper.h5'
     )
     tgt_joint_pos_df = pd.read_hdf(tgt_joint_pos_path)

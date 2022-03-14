@@ -5,7 +5,8 @@ import pybullet as p
 import NeuroMechFly
 from pathlib import Path
 from farms_container import Container
-from gym_nmf.envs.nmf18 import _NMF18Simulation, NMF18SimplePositionControlEnv
+from nmf_gym.envs.nmf18 import _NMF18Simulation, NMF18SimplePositionControlEnv
+
 
 class NMF18SimulationTestCase(unittest.TestCase):
     def get_new_sim(self, run_time=0.1, time_step=1e-4, sim_options=dict()):

@@ -5,7 +5,7 @@ a test.
 """
 
 import gym
-import gym_nmf
+import nmf_gym
 from pathlib import Path
 from datetime import datetime
 from stable_baselines3 import PPO
