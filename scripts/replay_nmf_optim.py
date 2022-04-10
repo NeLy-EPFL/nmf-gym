@@ -33,7 +33,6 @@ if __name__ == '__main__':
                                             sim_options=rec_options)
     elif TO_SAVE == SaveMode.FRAMES:
         res_path = basedir / 'data/test_data/sample_rec'
-        res_path.mkdir(exist_ok=True, parents=True)
         rec_options = {'save_frames': True, 'results_path': res_path}
         env = NMF18SimplePositionControlEnv(run_time=6, time_step=5e-4, kp=0.4,
                                             headless=False, with_ball=True,

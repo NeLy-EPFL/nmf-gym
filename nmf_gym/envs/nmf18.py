@@ -66,6 +66,7 @@ class _NMF18Simulation(BulletSimulation):
             sim_options['moviespeed'] = sim_options.get('moviespeed', 1) / 11.06
         if 'results_path' in sim_options:
             sim_options['results_path'] = str(sim_options['results_path'])
+        print(sim_options)
         super().__init__(container, units, **sim_options)
 
         self.kp = kp
