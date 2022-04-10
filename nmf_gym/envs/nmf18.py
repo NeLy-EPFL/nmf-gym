@@ -6,6 +6,8 @@ import gym
 import numpy as np
 import pandas as pd
 import pybullet as p
+import farms_pylog as pylog
+from uuid import uuid4
 from typing import Tuple, Dict
 from pathlib import Path
 from PIL import Image
@@ -39,7 +41,7 @@ class Container(_Container):
 
 class _NMF18Simulation(BulletSimulation):
     def __init__(self, container, sim_options, control_mode, kp=None, kv=None,
-                 max_force=None,
+                 max_force=None, movie_name=None, movie_speed=1.0,
                  units=SimulationUnitScaling(meters=1000, kilograms=1000)):
 
         if 'model' not in sim_options:
@@ -57,6 +59,16 @@ class _NMF18Simulation(BulletSimulation):
             sim_options['pose'] = str(_neuromechfly_path /
                 'data/config/pose/pose_tripod.yaml'
             )
+        self.movie_name = movie_name
+        self.movie_speed = movie_speed
+        if movie_name is not None:
+            # PyBullet only accept filenames, not POSIX paths. Annoying hack.
+            sim_options.update({
+                'record': True,
+                'moviename': movie_name,
+                # PyBullet outputs video with wrong fps, hardcoded hacky fix
+                'moviespeed': movie_speed / 11.06,
+            })
         super().__init__(container, units, **sim_options)
 
         self.kp = kp
@@ -266,6 +278,8 @@ class _NMF18Simulation(BulletSimulation):
 
     def step(self, t, action_dict=dict(), optimization=False):
         """ Step the simulation.
+        t (int)
+            This is the current iteration! Not actual time
         Returns
         -------
         out :
@@ -348,7 +362,7 @@ class NMF18PositionControlBaseEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
     def __init__(self, run_time=2.0, time_step=1e-4, kp=0.4, kv=0.9,
-                 max_force=20,
+                 max_force=20, movie_name=None, movie_speed=1.0,
                  headless=True, with_ball=True, sim_options=dict()):
         super().__init__()
         self.run_time = run_time
@@ -356,6 +370,8 @@ class NMF18PositionControlBaseEnv(gym.Env):
         self.kp = kp
         self.kv = kv
         self.max_force = max_force
+        self.movie_name = movie_name
+        self.movie_speed = movie_speed
         self.sim_options = {
             'model_offset': [0., 0., 11.2e-3],
             'run_time': run_time,
@@ -368,7 +384,7 @@ class NMF18PositionControlBaseEnv(gym.Env):
             'track': False,
             'slow_down': False,
             'sleep_time': 1e-2,
-            'rot_cam': True,
+            'rot_cam': False,
             'ground': 'floor',
             'save_frames': False,
         }
@@ -413,7 +429,7 @@ class NMF18PositionControlBaseEnv(gym.Env):
         # Step simulation
         tgt_pos_dict = self._parse_action(action)
 
-        self.sim.step(self.curr_time,
+        self.sim.step(self.curr_iter,
                       action_dict={'target_positions': tgt_pos_dict})
         self.curr_time += self.time_step
         self.curr_iter += 1
@@ -469,6 +485,8 @@ class NMF18PositionControlBaseEnv(gym.Env):
         self.sim = _NMF18Simulation(container, self.sim_options,
                                     kp=self.kp, kv=self.kv,
                                     max_force=self.max_force,
+                                    movie_name=self.movie_name,
+                                    movie_speed=self.movie_speed,
                                     control_mode='position')
         self.curr_iter = 0
         self.curr_time = 0

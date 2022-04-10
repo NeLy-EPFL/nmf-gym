@@ -8,15 +8,36 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from pathlib import Path
+from tqdm import trange
+from enum import Enum
 
 import nmf_gym
 from nmf_gym.envs import NMF18SimplePositionControlEnv
 
 
+class SaveMode(Enum):
+    NO_SAVE = 0
+    VIDEO = 1
+    FRAMES = 2
+
+TO_SAVE = SaveMode.VIDEO
+
 if __name__ == '__main__':
     # Initialize gym env
-    env = NMF18SimplePositionControlEnv(run_time=6, time_step=5e-4, kp=0.4,
-                                        headless=False, with_ball=True)
+    if TO_SAVE == SaveMode.VIDEO:
+        env = NMF18SimplePositionControlEnv(
+            run_time=6, time_step=5e-4, kp=0.4,
+            headless=False, with_ball=True,
+            movie_name='test_movie.mp4'
+        )
+    elif TO_SAVE == SaveMode.FRAMES:
+        rec_options = {'save_frames': True}
+        env = NMF18SimplePositionControlEnv(run_time=6, time_step=5e-4, kp=0.4,
+                                            headless=False, with_ball=True,
+                                            sim_options=rec_options)
+    else:
+        env = NMF18SimplePositionControlEnv(run_time=6, time_step=5e-4, kp=0.4,
+                                            headless=False, with_ball=True)
     
     # Load target position dataframe
     tgt_joint_pos_path = (
@@ -29,11 +50,12 @@ if __name__ == '__main__':
     # Run simulation
     obs_hist = []
     reward_hist = []
-    for i in range(env.max_niters):
+    for i in trange(env.max_niters):
         obs, reward, is_done, _ = env.step(tgt_joint_pos_df.iloc[i])
         assert is_done == (i == env.max_niters - 1)
         obs_hist.append(obs)
         reward_hist.append(reward)
+    env.close()
     
     # Plot joint positions
     t_grid = np.arange(env.max_niters) * env.time_step
