@@ -1,8 +1,13 @@
+from typing_extensions import runtime
 import unittest
 import numpy as np
 import pandas as pd
 import pybullet as p
 import NeuroMechFly
+import tempfile
+import shutil
+import json
+from time import sleep
 from pathlib import Path
 from farms_container import Container
 from nmf_gym.envs.nmf18 import _NMF18Simulation, NMF18SimplePositionControlEnv
@@ -24,7 +29,7 @@ class NMF18SimulationTestCase(unittest.TestCase):
             'track': False,
             'slow_down': False,
             'sleep_time': 1e-2,
-            'rot_cam': True,
+            'rot_cam': False,
             'ground': 'floor',
             'save_frames': False,
         }
@@ -40,8 +45,7 @@ class NMF18SimulationTestCase(unittest.TestCase):
                          if 'support' not in name}
             sim.step(t, action_dict={'target_positions': joint_pos})
     
-    def test_move_act_joints(self):
-        sim = self.get_new_sim(run_time=0.1)
+    def _move_act_joints(self, sim):
         act_joints = ['RFCoxa', 'RFFemur', 'RFTibia',
                       'RMCoxa_roll', 'RMFemur', 'RMTibia',
                       'RHCoxa_roll', 'RHFemur', 'RHTibia']
@@ -62,7 +66,39 @@ class NMF18SimulationTestCase(unittest.TestCase):
             tgt_pos = (init_pos[curr_joint] +
                        (i % nframes_per_joint) * rad_step_size)
             action_dict = {'target_positions': {curr_joint: tgt_pos}}
-            sim.step(t, action_dict=action_dict)
+            sim.step(i, action_dict=action_dict)
+
+    def test_move_act_joints(self):
+        sim = self.get_new_sim(run_time=0.1)
+        self._move_act_joints(sim)
+
+    def test_save_frames(self):
+        tempdir = tempfile.mkdtemp()
+        rec_options = {'save_frames': True, 'results_path': tempdir}
+        try:
+            sim = self.get_new_sim(run_time=0.1, sim_options=rec_options)
+            self._move_act_joints(sim)
+            with open(Path(tempdir) / 'fps.json') as f:
+                metadata = json.loads(f.read())
+            expected_nfiles = int(0.1 * metadata['fps'])
+            self.assertEqual(len(list(Path(tempdir).glob('*.png'))),
+                             expected_nfiles)
+        finally:
+            print(f'Temporary file {tempdir} removed')
+            shutil.rmtree(tempdir)
+
+    def test_save_video(self):
+        rec_options = {'record': True, 'moviename': 'test_movie.mp4'}
+        try:
+            sim = self.get_new_sim(run_time=0.1, sim_options=rec_options)
+            self._move_act_joints(sim)
+            sleep(1)
+            video_path = Path(rec_options['moviename'])
+            self.assertTrue(video_path.is_file())
+        finally:
+            print(f'Temporary file {video_path} removed')
+            video_path.unlink()
+
 
 
 class NMF18PositionControlEnvTestCase(unittest.TestCase):
