@@ -3,6 +3,7 @@ import os
 import abc
 import time
 import gym
+import json
 import numpy as np
 import pandas as pd
 import pybullet as p
@@ -41,7 +42,7 @@ class Container(_Container):
 
 class _NMF18Simulation(BulletSimulation):
     def __init__(self, container, sim_options, control_mode, kp=None, kv=None,
-                 max_force=None, movie_name=None, movie_speed=1.0,
+                 max_force=None,
                  units=SimulationUnitScaling(meters=1000, kilograms=1000)):
 
         if 'model' not in sim_options:
@@ -59,16 +60,12 @@ class _NMF18Simulation(BulletSimulation):
             sim_options['pose'] = str(_neuromechfly_path /
                 'data/config/pose/pose_tripod.yaml'
             )
-        self.movie_name = movie_name
-        self.movie_speed = movie_speed
-        if movie_name is not None:
+        if sim_options['record']:
             # PyBullet only accept filenames, not POSIX paths. Annoying hack.
-            sim_options.update({
-                'record': True,
-                'moviename': movie_name,
-                # PyBullet outputs video with wrong fps, hardcoded hacky fix
-                'moviespeed': movie_speed / 11.06,
-            })
+            # Also, PyBullet outputs video with wrong fps, hardcoded hacky fix
+            sim_options['moviespeed'] = sim_options.get('moviespeed', 1) / 11.06
+        if 'results_path' in sim_options:
+            sim_options['results_path'] = str(sim_options['results_path'])
         super().__init__(container, units, **sim_options)
 
         self.kp = kp
@@ -87,6 +84,21 @@ class _NMF18Simulation(BulletSimulation):
         for _link, idx in self.link_id.items():
             for name, value in dynamics.items():
                 p.changeDynamics(self.animal, idx, **{name: value})
+
+        # Handle save frames
+        if self.save_frames:
+            # Save only this number of frames per second
+            tgt_video_fps = sim_options.get('target_video_fps', 30)
+            # This is actually offset a bit to make it divisible
+            real_rec_interval = (1 / tgt_video_fps) / self.time_step
+            self._real_rec_interval = int(np.rint(real_rec_interval))
+            # Save this number to the output dir as metadata
+            with open(Path(self.path_imgs) / 'fps.json', 'w') as f:
+                metadata = {
+                    'fps': 1 / (self._real_rec_interval * self.time_step),
+                    'interval': self._real_rec_interval
+                }
+                f.write(json.dumps(metadata))
 
         self.last_draw = []
         self.control_mode = control_mode
@@ -286,7 +298,7 @@ class _NMF18Simulation(BulletSimulation):
         """
         self._reposition_camera(t)
 
-        if self.save_frames:
+        if self.save_frames and t % self._real_rec_interval == 0:
             self._save_curr_frame(t)
 
         # Update logs
@@ -362,7 +374,7 @@ class NMF18PositionControlBaseEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
     def __init__(self, run_time=2.0, time_step=1e-4, kp=0.4, kv=0.9,
-                 max_force=20, movie_name=None, movie_speed=1.0,
+                 max_force=20,
                  headless=True, with_ball=True, sim_options=dict()):
         super().__init__()
         self.run_time = run_time
@@ -370,8 +382,6 @@ class NMF18PositionControlBaseEnv(gym.Env):
         self.kp = kp
         self.kv = kv
         self.max_force = max_force
-        self.movie_name = movie_name
-        self.movie_speed = movie_speed
         self.sim_options = {
             'model_offset': [0., 0., 11.2e-3],
             'run_time': run_time,
@@ -485,8 +495,6 @@ class NMF18PositionControlBaseEnv(gym.Env):
         self.sim = _NMF18Simulation(container, self.sim_options,
                                     kp=self.kp, kv=self.kv,
                                     max_force=self.max_force,
-                                    movie_name=self.movie_name,
-                                    movie_speed=self.movie_speed,
                                     control_mode='position')
         self.curr_iter = 0
         self.curr_time = 0

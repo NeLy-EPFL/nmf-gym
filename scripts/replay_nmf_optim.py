@@ -16,22 +16,25 @@ from nmf_gym.envs import NMF18SimplePositionControlEnv
 
 
 class SaveMode(Enum):
-    NO_SAVE = 0
+    NONE = 0
     VIDEO = 1
     FRAMES = 2
 
-TO_SAVE = SaveMode.VIDEO
+TO_SAVE = SaveMode.NONE
 
 if __name__ == '__main__':
+    basedir = Path(nmf_gym.__path__[0]).parent
+
     # Initialize gym env
     if TO_SAVE == SaveMode.VIDEO:
-        env = NMF18SimplePositionControlEnv(
-            run_time=6, time_step=5e-4, kp=0.4,
-            headless=False, with_ball=True,
-            movie_name='test_movie.mp4'
-        )
+        rec_options = {'record': True, 'moviename': 'test_movie.mp4'}
+        env = NMF18SimplePositionControlEnv(run_time=6, time_step=5e-4, kp=0.4,
+                                            headless=False, with_ball=True,
+                                            sim_options=rec_options)
     elif TO_SAVE == SaveMode.FRAMES:
-        rec_options = {'save_frames': True}
+        res_path = basedir / 'data/test_data/sample_rec'
+        res_path.mkdir(exist_ok=True, parents=True)
+        rec_options = {'save_frames': True, 'results_path': res_path}
         env = NMF18SimplePositionControlEnv(run_time=6, time_step=5e-4, kp=0.4,
                                             headless=False, with_ball=True,
                                             sim_options=rec_options)
@@ -41,7 +44,7 @@ if __name__ == '__main__':
     
     # Load target position dataframe
     tgt_joint_pos_path = (
-        Path(nmf_gym.__path__[0]).parent / 
+        basedir / 
         'data/nmf_paper_optim_replay/joint_positions_from_paper.h5'
     )
     tgt_joint_pos_df = pd.read_hdf(tgt_joint_pos_path)
