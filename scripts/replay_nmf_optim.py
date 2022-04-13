@@ -12,7 +12,7 @@ from tqdm import trange
 from enum import Enum
 
 import nmf_gym
-from nmf_gym.envs import NMF18SimplePositionControlEnv
+from nmf_gym.envs import NMFSimplePositionControlEnv
 
 
 class SaveMode(Enum):
@@ -28,17 +28,17 @@ if __name__ == '__main__':
     # Initialize gym env
     if TO_SAVE == SaveMode.VIDEO:
         rec_options = {'record': True, 'moviename': 'test_movie.mp4'}
-        env = NMF18SimplePositionControlEnv(run_time=6, time_step=5e-4, kp=0.4,
+        env = NMFSimplePositionControlEnv(run_time=6, time_step=5e-4, kp=0.4,
                                             headless=False, with_ball=True,
                                             sim_options=rec_options)
     elif TO_SAVE == SaveMode.FRAMES:
         res_path = basedir / 'data/test_data/sample_rec'
         rec_options = {'save_frames': True, 'results_path': res_path}
-        env = NMF18SimplePositionControlEnv(run_time=6, time_step=5e-4, kp=0.4,
+        env = NMFSimplePositionControlEnv(run_time=6, time_step=5e-4, kp=0.4,
                                             headless=False, with_ball=True,
                                             sim_options=rec_options)
     else:
-        env = NMF18SimplePositionControlEnv(run_time=6, time_step=5e-4, kp=0.4,
+        env = NMFSimplePositionControlEnv(run_time=6, time_step=5e-4, kp=0.4,
                                             headless=False, with_ball=True)
     
     # Load target position dataframe
