@@ -49,7 +49,7 @@ class _NMFSimulation(BulletSimulation):
         if 'model' not in sim_options:
             # Joint limits strictly enforced (joint types = revolute in SDF)
             sim_options['model'] = str(_nmf_gym_path /
-                'data/design/sdf/neuromechfly_42dof.sdf'
+                'data/design/sdf/neuromechfly_42dof_with_limit.sdf'
             )
         if 'pose' not in sim_options:
             sim_options['pose'] = str(_nmf_gym_path /
