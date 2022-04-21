@@ -368,8 +368,8 @@ class _NMFSimulation(BulletSimulation):
 class NMFPositionControlBaseEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, run_time=2.0, time_step=1e-4, kp=0.4, kv=0.9,
-                 max_force=20,
+    def __init__(self, act_joints,
+                 run_time=2.0, time_step=1e-4, kp=0.4, kv=0.9, max_force=20,
                  headless=True, with_ball=True, sim_options=dict()):
         super().__init__()
         self.run_time = run_time
@@ -396,11 +396,7 @@ class NMFPositionControlBaseEnv(gym.Env):
         self.sim_options.update(sim_options)
         self.sim_options.update({'headless': headless,
                                  'ground': 'ball' if with_ball else 'floor'})
-        _joints = ['Coxa', 'Coxa_roll', 'Coxa_yaw', 'Femur', 'Femur_roll',
-                   'Tibia', 'Tarsus1']
-        self.act_joints = [f'joint_{s}{p}{x}' for s in ['R', 'L']
-                                              for p in ['F', 'M', 'H']
-                                              for x in _joints]
+        self.act_joints = act_joints
         self.max_niters = int(np.ceil(self.run_time / self.time_step))
 
         # Define spaces
