@@ -1,4 +1,3 @@
-from typing_extensions import runtime
 import unittest
 import numpy as np
 import pandas as pd
@@ -11,6 +10,16 @@ from time import sleep
 from pathlib import Path
 from farms_container import Container
 from nmf_gym.envs.nmf18 import _NMFSimulation, NMFSimplePositionControlEnv
+
+
+# Define actuated joints
+# This order of joints needs to be consistent across projects
+_joints_per_leg = ['Coxa', 'Coxa_roll', 'Coxa_yaw', 'Femur', 'Femur_roll',
+            'Tibia', 'Tarsus1']
+joints_42dof = [f'joint_{s}{pos}{j}'
+                for s in ('L', 'R')
+                for pos in ('F', 'M', 'H')
+                for j in _joints_per_leg]
 
 
 class NMFSimulationTestCase(unittest.TestCase):
@@ -107,8 +116,26 @@ class NMFSimulationTestCase(unittest.TestCase):
 
 class NMFPositionControlEnvTestCase(unittest.TestCase):
     def test_basic(self):
-        env = NMFSimplePositionControlEnv(run_time=0.02, headless=False,
-                                            with_ball=False)
+        env = NMFSimplePositionControlEnv(act_joints=joints_42dof,
+                                          run_time=0.02, headless=False,
+                                          with_ball=False)
+        nsteps = 200
+        obs_hist = []
+        reward_hist = []
+        for i in range(nsteps):
+            # sleep(0.1)
+            tgt_pos = np.deg2rad(10 * i / nsteps)
+            obs, reward, is_done, _ = env.step(np.zeros((42,)) * tgt_pos)
+            obs_hist.append(obs)
+            reward_hist.append(reward)
+            self.assertEqual(is_done, i == nsteps - 1)
+        # simulation is now finished, stepping again should raise RuntimeError
+        self.assertRaises(RuntimeError, env.step, tgt_pos)
+    
+    def test_basic_10ms(self):
+        env = NMFSimplePositionControlEnv(act_joints=joints_42dof,
+                                          run_time=2, headless=False,
+                                          time_step=0.01, with_ball=False)
         nsteps = 200
         obs_hist = []
         reward_hist = []
@@ -123,7 +150,8 @@ class NMFPositionControlEnvTestCase(unittest.TestCase):
         self.assertRaises(RuntimeError, env.step, tgt_pos)
     
     def test_human_render(self):
-        env = NMFSimplePositionControlEnv(run_time=0.0005, with_ball=False)
+        env = NMFSimplePositionControlEnv(act_joints=joints_42dof,
+                                          run_time=0.0005, with_ball=False)
         nsteps = 5
         obs_hist = []
         reward_hist = []
@@ -139,8 +167,9 @@ class NMFPositionControlEnvTestCase(unittest.TestCase):
         self.assertEqual(img.shape, (768, 1024, 4))
     
     def test_basic_with_ball_unrealistic(self):
-        env = NMFSimplePositionControlEnv(run_time=0.2, headless=False,
-                                            with_ball=True)
+        env = NMFSimplePositionControlEnv(act_joints=joints_42dof,
+                                          run_time=0.2, headless=False,
+                                          with_ball=True)
         nsteps = 2000
         obs_hist = []
         reward_hist = []
