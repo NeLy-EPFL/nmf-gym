@@ -2,6 +2,7 @@ from ntpath import join
 import os
 import abc
 import time
+import nmf_gym
 import gym
 import json
 import numpy as np
@@ -20,8 +21,23 @@ from NeuroMechFly.sdf.units import SimulationUnitScaling
 from NeuroMechFly.simulation.bullet_simulation import BulletSimulation
 
 
-_neuromechfly_path = Path(NeuroMechFly.__path__[0]).parent
-
+_nmf_gym_path = Path(nmf_gym.__path__[0]).parent
+_fixed_positions = {
+        'joint_A3': -15,
+        'joint_A4': -15,
+        'joint_A5': -15,
+        'joint_A6': -15,
+        'joint_LAntenna': 35,
+        'joint_RAntenna': -35,
+        'joint_Rostrum': 90,
+        'joint_Haustellum': -60,
+        'joint_LWing_roll': 90,
+        'joint_LWing_yaw': -17,
+        'joint_RWing_roll': -90,
+        'joint_RWing_yaw': 17,
+        'joint_Head': 10
+    }
+_fixed_positions = {k: np.deg2rad(v) for k, v in _fixed_positions.items()}
 
 def load_joint_limit(sdf_path):
     _sdf_model = ModelSDF.read(sdf_path)[0]
@@ -40,25 +56,19 @@ class Container(_Container):
         return int(self.__max_iterations)
 
 
-class _NMF18Simulation(BulletSimulation):
+class _NMFSimulation(BulletSimulation):
     def __init__(self, container, sim_options, control_mode, kp=None, kv=None,
-                 max_force=None,
+                 max_force=None, fixed_positions=dict(),
                  units=SimulationUnitScaling(meters=1000, kilograms=1000)):
 
         if 'model' not in sim_options:
             # Joint limits strictly enforced (joint types = revolute in SDF)
-            sim_options['model'] = str(_neuromechfly_path /
-                'data/design/sdf/' /
-                'neuromechfly_locomotion_optimization_revolute.sdf'
+            sim_options['model'] = str(_nmf_gym_path /
+                'data/design/sdf/neuromechfly_42dof_with_limit.sdf'
             )
-            # Joint limits not enforced (joint types = continuous in SDF)
-            # sim_options['model'] = str(_neuromechfly_path /
-            #     'data/design/sdf/' /
-            #     'neuromechfly_locomotion_optimization.sdf'
-            # )
         if 'pose' not in sim_options:
-            sim_options['pose'] = str(_neuromechfly_path /
-                'data/config/pose/pose_tripod.yaml'
+            sim_options['pose'] = str(_nmf_gym_path /
+                'data/pose/pose_stretch.yaml'
             )
         if sim_options['record']:
             # PyBullet only accept filenames, not POSIX paths. Annoying hack.
@@ -66,6 +76,7 @@ class _NMF18Simulation(BulletSimulation):
             sim_options['moviespeed'] = sim_options.get('moviespeed', 1) / 11.06
         if 'results_path' in sim_options:
             sim_options['results_path'] = str(sim_options['results_path'])
+        self.fixed_positions = fixed_positions
         super().__init__(container, units, **sim_options)
 
         self.kp = kp
@@ -110,6 +121,16 @@ class _NMF18Simulation(BulletSimulation):
         else:
             raise NotImplementedError(
                 f'Control mode "{self.control_mode}" not implemented')
+        
+        # Now, handle fixed positions via direct pos control
+        for joint_name, position in self.fixed_positions.items():
+            jid = self.joint_id[joint_name]
+            p.setJointMotorControl2(self.animal, jid,
+                                    controlMode=p.POSITION_CONTROL,
+                                    targetPosition=position,
+                                    positionGain=self.kp,
+                                    force=self.max_force)
+        
         self._mark_collisions()
     
     def _position_controller_to_actuator(self, t, action_dict):
@@ -370,12 +391,13 @@ class _NMF18Simulation(BulletSimulation):
         return drot_dt * self.ball_radius * self.units.meters
 
 
-class NMF18PositionControlBaseEnv(gym.Env):
+class NMFPositionControlBaseEnv(gym.Env):
     metadata = {'render.modes': ['human']}
 
-    def __init__(self, run_time=2.0, time_step=1e-4, kp=0.4, kv=0.9,
-                 max_force=20,
-                 headless=True, with_ball=True, sim_options=dict()):
+    def __init__(self, act_joints,
+                 run_time=2.0, time_step=1e-4, kp=0.4, kv=0.9, max_force=20,
+                 headless=True, with_ball=True, sim_options=dict(),
+                 set_natural_pose=False, fixed_positions=dict()):
         super().__init__()
         self.run_time = run_time
         self.time_step = time_step
@@ -398,14 +420,18 @@ class NMF18PositionControlBaseEnv(gym.Env):
             'ground': 'floor',
             'save_frames': False,
         }
+        if set_natural_pose:
+            fp = _fixed_positions.copy()
+            fp.update(fixed_positions)  # user provided vals override defaults
+            fixed_positions = fp
+            sim_options['model'] = str(_nmf_gym_path /
+                'data/design/sdf/neuromechfly_42dof_with_limit_viz.sdf'
+            )
+        self.fixed_positions = fixed_positions
         self.sim_options.update(sim_options)
         self.sim_options.update({'headless': headless,
                                  'ground': 'ball' if with_ball else 'floor'})
-        self.act_joints = ['FCoxa', 'FFemur', 'FTibia',
-                           'MCoxa_roll', 'MFemur', 'MTibia',
-                           'HCoxa_roll', 'HFemur', 'HTibia']
-        self.act_joints = [f'joint_{s}{x}' for s in ['R', 'L']
-                                           for x in self.act_joints]
+        self.act_joints = act_joints
         self.max_niters = int(np.ceil(self.run_time / self.time_step))
 
         # Define spaces
@@ -492,10 +518,11 @@ class NMF18PositionControlBaseEnv(gym.Env):
         self.vel_hist = self.pos_hist.copy()
 
         container = Container(self.max_niters)
-        self.sim = _NMF18Simulation(container, self.sim_options,
+        self.sim = _NMFSimulation(container, self.sim_options,
                                     kp=self.kp, kv=self.kv,
                                     max_force=self.max_force,
-                                    control_mode='position')
+                                    control_mode='position',
+                                    fixed_positions=self.fixed_positions)
         self.curr_iter = 0
         self.curr_time = 0
         init_state = self.sim.get_curr_state()
@@ -570,7 +597,7 @@ class NMF18PositionControlBaseEnv(gym.Env):
         return NotImplemented
 
 
-class NMF18SimplePositionControlEnv(NMF18PositionControlBaseEnv):
+class NMFSimplePositionControlEnv(NMFPositionControlBaseEnv):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         
@@ -600,7 +627,7 @@ class NMF18SimplePositionControlEnv(NMF18PositionControlBaseEnv):
         return np.nan
 
 
-class NMF18Pos2PosDistanceEnv(NMF18PositionControlBaseEnv):
+class NMFPos2PosDistanceEnv(NMFPositionControlBaseEnv):
     def __init__(self, state_indices, run_time=2, time_step=0.0001,
                  kp=0.4, kv=0.9, max_force=20, headless=True, with_ball=True,
                  sim_options=dict()):

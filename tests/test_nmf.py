@@ -1,4 +1,3 @@
-from typing_extensions import runtime
 import unittest
 import numpy as np
 import pandas as pd
@@ -10,10 +9,20 @@ import json
 from time import sleep
 from pathlib import Path
 from farms_container import Container
-from nmf_gym.envs.nmf18 import _NMF18Simulation, NMF18SimplePositionControlEnv
+from nmf_gym.envs.nmf import _NMFSimulation, NMFSimplePositionControlEnv
 
 
-class NMF18SimulationTestCase(unittest.TestCase):
+# Define actuated joints
+# This order of joints needs to be consistent across projects
+_joints_per_leg = ['Coxa', 'Coxa_roll', 'Coxa_yaw', 'Femur', 'Femur_roll',
+            'Tibia', 'Tarsus1']
+joints_42dof = [f'joint_{s}{pos}{j}'
+                for s in ('L', 'R')
+                for pos in ('F', 'M', 'H')
+                for j in _joints_per_leg]
+
+
+class NMFSimulationTestCase(unittest.TestCase):
     def get_new_sim(self, run_time=0.1, time_step=1e-4, sim_options=dict()):
         container = Container(run_time / time_step)
         _sim_options = {
@@ -34,7 +43,7 @@ class NMF18SimulationTestCase(unittest.TestCase):
             'save_frames': False,
         }
         _sim_options.update(sim_options)
-        return _NMF18Simulation(container, _sim_options, kp=0.4,
+        return _NMFSimulation(container, _sim_options, kp=0.4,
                                 control_mode='position')
     
     def test_short_run(self):
@@ -46,10 +55,14 @@ class NMF18SimulationTestCase(unittest.TestCase):
             sim.step(t, action_dict={'target_positions': joint_pos})
     
     def _move_act_joints(self, sim):
-        act_joints = ['RFCoxa', 'RFFemur', 'RFTibia',
-                      'RMCoxa_roll', 'RMFemur', 'RMTibia',
-                      'RHCoxa_roll', 'RHFemur', 'RHTibia']
-        act_joints = [f'joint_{x}' for x in act_joints]
+        # act_joints = ['RFCoxa', 'RFFemur', 'RFTibia',
+        #               'RMCoxa_roll', 'RMFemur', 'RMTibia',
+        #               'RHCoxa_roll', 'RHFemur', 'RHTibia']
+        # act_joints = [f'joint_{x}' for x in act_joints]
+        _joints = ['Coxa', 'Coxa_roll', 'Coxa_yaw', 'Femur', 'Femur_roll',
+                   'Tibia', 'Tarsus1']
+        act_joints = [f'joint_R{p}{x}' for p in ['F', 'M', 'H']
+                                       for x in _joints]
         init_pos = {
             k: p.getJointState(sim.animal, jid)[0]
             for k, jid in sim.joint_id.items()
@@ -101,16 +114,35 @@ class NMF18SimulationTestCase(unittest.TestCase):
 
 
 
-class NMF18PositionControlEnvTestCase(unittest.TestCase):
+class NMFPositionControlEnvTestCase(unittest.TestCase):
     def test_basic(self):
-        env = NMF18SimplePositionControlEnv(run_time=0.02, headless=False,
-                                            with_ball=False)
+        env = NMFSimplePositionControlEnv(act_joints=joints_42dof,
+                                          run_time=0.02, headless=False,
+                                          with_ball=False)
         nsteps = 200
         obs_hist = []
         reward_hist = []
         for i in range(nsteps):
-            tgt_pos = np.deg2rad(60 * i / nsteps)
-            obs, reward, is_done, _ = env.step(np.ones((18,)) * tgt_pos)
+            # sleep(0.1)
+            tgt_pos = np.deg2rad(10 * i / nsteps)
+            obs, reward, is_done, _ = env.step(np.zeros((42,)) * tgt_pos)
+            obs_hist.append(obs)
+            reward_hist.append(reward)
+            self.assertEqual(is_done, i == nsteps - 1)
+        # simulation is now finished, stepping again should raise RuntimeError
+        self.assertRaises(RuntimeError, env.step, tgt_pos)
+    
+    def test_basic_10ms(self):
+        env = NMFSimplePositionControlEnv(act_joints=joints_42dof,
+                                          run_time=2, headless=False,
+                                          time_step=0.01, with_ball=False)
+        nsteps = 200
+        obs_hist = []
+        reward_hist = []
+        for i in range(nsteps):
+            # sleep(0.1)
+            tgt_pos = np.deg2rad(10 * i / nsteps)
+            obs, reward, is_done, _ = env.step(np.zeros((42,)) * tgt_pos)
             obs_hist.append(obs)
             reward_hist.append(reward)
             self.assertEqual(is_done, i == nsteps - 1)
@@ -118,14 +150,15 @@ class NMF18PositionControlEnvTestCase(unittest.TestCase):
         self.assertRaises(RuntimeError, env.step, tgt_pos)
     
     def test_human_render(self):
-        env = NMF18SimplePositionControlEnv(run_time=0.0005, with_ball=False)
+        env = NMFSimplePositionControlEnv(act_joints=joints_42dof,
+                                          run_time=0.0005, with_ball=False)
         nsteps = 5
         obs_hist = []
         reward_hist = []
         for i in range(nsteps):
             tgt_pos = np.deg2rad(60 * i / nsteps)
             img = env.render()
-            obs, reward, is_done, _ = env.step(np.ones((18,)) * tgt_pos)
+            obs, reward, is_done, _ = env.step(np.ones((42,)) * tgt_pos)
             obs_hist.append(obs)
             reward_hist.append(reward)
             self.assertEqual(is_done, i == nsteps - 1)
@@ -134,14 +167,15 @@ class NMF18PositionControlEnvTestCase(unittest.TestCase):
         self.assertEqual(img.shape, (768, 1024, 4))
     
     def test_basic_with_ball_unrealistic(self):
-        env = NMF18SimplePositionControlEnv(run_time=0.2, headless=False,
-                                            with_ball=True)
+        env = NMFSimplePositionControlEnv(act_joints=joints_42dof,
+                                          run_time=0.2, headless=False,
+                                          with_ball=True)
         nsteps = 2000
         obs_hist = []
         reward_hist = []
         for i in range(nsteps):
             tgt_pos = np.deg2rad(60 * i / nsteps)
-            obs, reward, is_done, _ = env.step(np.ones((18,)) * tgt_pos)
+            obs, reward, is_done, _ = env.step(np.ones((42,)) * tgt_pos)
             obs_hist.append(obs)
             reward_hist.append(reward)
             self.assertEqual(is_done, i == nsteps - 1)
