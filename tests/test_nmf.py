@@ -9,7 +9,7 @@ import json
 from time import sleep
 from pathlib import Path
 from farms_container import Container
-from nmf_gym.envs.nmf18 import _NMFSimulation, NMFSimplePositionControlEnv
+from nmf_gym.envs.nmf import _NMFSimulation, NMFSimplePositionControlEnv
 
 
 # Define actuated joints

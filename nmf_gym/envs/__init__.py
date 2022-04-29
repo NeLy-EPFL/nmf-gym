@@ -1,4 +1,4 @@
-from nmf_gym.envs.nmf18 import (
+from nmf_gym.envs.nmf import (
     NMFSimplePositionControlEnv,
     NMFPos2PosDistanceEnv,
 )
